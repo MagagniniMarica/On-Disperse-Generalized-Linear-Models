@@ -4,6 +4,12 @@
 
 This file contains all the support functions for the VNS strategy apllied to the 
 maximum dipersion problem. 
+
+Note for paper reader: 
+- SQ = \B_0 (known models)
+- SP = \B (models to construct)
+- FSP = \Xi (set of P binary vectors)
+- fsp  = \xi (binary vector)
 """
 
 import numpy as np
@@ -21,7 +27,7 @@ def update_k_(k,K):
         return 1
 
 
-# 'Hamming distance' between two feature selection structures 
+# 'Classical Hamming distance' between two feature selection structures 
 def count_differences(fsp1, fsp2):
     sorted_fsp1 = sorted(fsp1)
     sorted_fsp2 = sorted(fsp2)
@@ -98,10 +104,10 @@ def extract_l1_(P,FSP_maxAcc_coeff,SQ, features):
                 
                 if a < b and SP_[f].iloc[p] != 0 :
                     T[f][p,q-P] = 1
-                    # i.e. \beta[p,f] <= \betaSQ[q,f]
+                    # i.e. \beta[p,f] <= \B0[q,f]
                 elif a > b and SP_[f].iloc[p] != 0 :
                     T[f][p,q-P] = -1
-                    #\beta[p,f] >= \betaSQ[q,f]
+                    #\beta[p,f] >= \B0[q,f]
     
     return E,T
 
@@ -144,7 +150,7 @@ def extract_o1_(X0, SQ, P,FSP_maxAcc_coeff ):
                 W[r, c-P] = 1
     return V,W
    
-# (d3) dispersion  computation
+# classical hamming dispersion  computation
 def min_hamming_distance(FSP, SQ):
     
     hamming_distance = 1000
@@ -424,6 +430,16 @@ def perturbation_dsa_(GLM, dataset, target, features,P,J1,k,tau, theta, gamma,SQ
     
     return None, None, trash_valid_fsp, FSP_store
 
+def Hamming_epsilon(B, epsilon):
+    """
+    This function check if all non zero features have absolute value greater than epsilon
+    """
+    for p, beta_dict in B.items():
+        for f, value in beta_dict.items():
+            # Controllo del valore assoluto
+            if abs(value) < epsilon:
+                return False
+    return True
 ###############################################################################
 # Accuracy check function
 ###############################################################################
