@@ -6,6 +6,11 @@
 This file contains the support fuction for the heuristic - VNS strategy - in 
 VNS_Max_Acc.py
 
+Note for paper reader: 
+- SQ = \B_0 (known models)
+- SP = \B (models to construct)
+- FSP = \Xi (set of P binary vectors)
+- fsp  = \xi (binary vector)
 """
 
 import numpy as np
@@ -26,7 +31,7 @@ def update_k_(k,K):
         return 1
 
 
-# 'Hamming distance' between two feature selection structures 
+# 'Classical Hamming distance' between two feature selection structures (\xi^p1,\xi^p2)
 def count_differences(fsp1, fsp2):
     sorted_fsp1 = sorted(fsp1)
     sorted_fsp2 = sorted(fsp2)
@@ -77,7 +82,7 @@ def shuffle_merge_ordered(A, B):
 # This function provides the combinatorial part in case of l1 norm between outputs (o1). 
 # It selects a randorm ordered list of P U Q models, storing the order infomation in 
 # matrices 'v' and 'w' . See Algorithm 4 in Supplementary Material.
-def o1_dispersion_(x0, betaS, P ):
+def o1_dispersion_(x0, B0, P ):
     
     # INNER DISPERSION v[i,j] = 1 if beta_i >= beta_j + gamma i,j = 1..P i!=j 
     SP_ord = np.random.permutation(np.arange(0, P)).tolist()
@@ -88,13 +93,13 @@ def o1_dispersion_(x0, betaS, P ):
                 v[r,c]=1
     
     # OUTER DISPERSION w[i,j] = 1 if beta_i >= beta_j + gamma i = 1,..P, j=1, .., Q
-    Q = len(betaS)
+    Q = len(B0)
     
 
     if Q>1:
-        SQ_x0 = np.array([np.dot(beta, x0) for beta in betaS])
+        SQ_x0 = np.array([np.dot(beta, x0) for beta in B0])
     else:
-        SQ_x0 = np.dot(betaS,x0)
+        SQ_x0 = np.dot(B0,x0)
     
     
     # Descending order 
@@ -209,10 +214,10 @@ def extract_l1_(P,FSP_maxAcc_coeff,SQ, features):
                 
                 if a < b and SP_[f].iloc[p] != 0 :
                     T[f][p,q-P] = 1
-                    # cioè \beta[p,f] <= \betaSQ[q,f]
+                    # cioè \beta[p,f] <= \B0[q,f]
                 elif a > b and SP_[f].iloc[p] != 0 :
                     T[f][p,q-P] = -1
-                    #\beta[p,f] >= \betaSQ[q,f]
+                    #\beta[p,f] >= \B0[q,f]
     
     return E,T
 
@@ -221,7 +226,7 @@ def extract_l1_(P,FSP_maxAcc_coeff,SQ, features):
 # For each feature j, it selects a randorm ordered list of P U Q models, 
 #storing the order infomation in 
 # dicts 'E' and 'T' . See Algorithm 4 in Supplementary Material.
-def l1_dispersion_(P,FSP,betaS, features):
+def l1_dispersion_(P,FSP,B0, features):
     # Note: pay attention to the FSP structure
     
     FSP_DF =  pd.DataFrame(FSP, columns = pd.Index(['bias']).append(features))
@@ -276,9 +281,9 @@ def l1_dispersion_(P,FSP,betaS, features):
     
     # OUTER DISPERSION
     # Sort B_0 models in ascending order
-    Q = len(betaS)
+    Q = len(B0)
     SQ_ord = {}
-    SQ = betaS.copy()
+    SQ = B0.copy()
     SQ.index = [P+q for q in SQ.index]
 
     for f in features:
@@ -323,10 +328,10 @@ def l1_dispersion_(P,FSP,betaS, features):
             for q in range(P, P+Q):
                 if merged[f].index(p) < merged[f].index(q) and FSP_DF[f].iloc[p] != 0 :
                     T[f][p,q-P] = 1
-                    # cioè \beta[p,f] <= \betaSQ[q,]
+                    # cioè \beta[p,f] <= \B0[q,]
                 elif merged[f].index(p) > merged[f].index(q) and FSP_DF[f].iloc[p] != 0 :
                     T[f][p,q-P] = -1
-                    #\beta[p,f] >= \betaSQ[q,]
+                    #\beta[p,f] >= \B0[q,]
                 
     
     
@@ -573,7 +578,7 @@ def perturbation_dsa_(GLM, dataset, target, features,P,J1,k,tau, theta, gamma,SQ
     
     
 
-    # for dsa dispersion 
+    # for dsa dispersion (classical Hamming distance) 
     def hamming_distance(list1, list2):
         return sum(b1 != b2 for b1, b2 in zip(list1, list2))    
     
@@ -687,7 +692,16 @@ def perturbation_dsa_(GLM, dataset, target, features,P,J1,k,tau, theta, gamma,SQ
     
     return None, None, trash_valid_fsp, FSP_store
 
-
+def Hamming_epsilon(B, epsilon):
+    """
+    This function check if all non zero features have absolute value greater than epsilon
+    """
+    for p, beta_dict in B.items():
+        for f, value in beta_dict.items():
+            # Controllo del valore assoluto
+            if abs(value) < epsilon:
+                return False
+    return True
 ###############################################################################
 #Accuracy check function
 ###############################################################################
