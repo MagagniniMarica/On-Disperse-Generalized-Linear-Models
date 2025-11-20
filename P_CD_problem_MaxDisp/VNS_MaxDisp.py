@@ -13,7 +13,7 @@ from pyomo import environ as pym
 from pyomo.opt import TerminationCondition
 
 
-from P_CD_problem_MaxDisp.funs_vns_Disp import update_k_,  perturbation_,perturbation_dsa_, min_hamming_distance
+from P_CD_problem_MaxDisp.funs_vns_Disp import update_k_,  perturbation_,perturbation_dsa_, min_hamming_distance, Hamming_epsilon
 
 
 # theta : maximal number of non-zero features 
@@ -253,8 +253,8 @@ def VNS_dsa_(GLM, Solver_, K,TimeLimit,
                 # Overall Hamming dispersion between B (FSP_star), considering B_0 (SQ)
                 betaP_star_HD = min_hamming_distance(FSP_star, SQ) 
                 
-                # Check if the new dispersion is better
-                if betaP_star_HD >= obj:
+                # Check if the new dispersion is better and the hamming_epsilon dispersion definition is satisfied
+                if betaP_star_HD >= obj and Hamming_epsilon(FSP_star_coeff, 1e-8):
                     obj = betaP_star_HD               
                     betaP = FSP_star_coeff
                     FSP = FSP_star
