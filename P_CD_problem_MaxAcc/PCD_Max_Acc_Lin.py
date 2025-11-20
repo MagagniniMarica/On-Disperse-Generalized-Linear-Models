@@ -292,9 +292,9 @@ def P_cond_disp_(dispersion, dataset, target, features,
     elif dispersion == 'dsa':
         m.c_Edis = pym.Constraint(m.q, m.p, rule = c_extra_dispersion)
         m.c_Idis = pym.Constraint(m.p, m.p, rule = c_intra_dispersion)
-        m.c_Idis_r1 = pym.Constraint(m.p, m.p, m.j, rule = c_z1)
-        m.c_Idis_r2 = pym.Constraint(m.p, m.p, m.j, rule = c_z2)
-        m.c_Idis_r3 = pym.Constraint(m.p, m.p, m.j, rule = c_z3)
+        m.c_Idis_r1 = pym.Constraint(m.p, m.p, m.j, rule = c_r1)
+        m.c_Idis_r2 = pym.Constraint(m.p, m.p, m.j, rule = c_r2)
+        m.c_Idis_r3 = pym.Constraint(m.p, m.p, m.j, rule = c_r3)
         m.c_xi_ = pym.Constraint(m.p,m.j, rule = cxi_)
         m.c_xi_lr_ = pym.Constraint(m.p,m.j, rule = cxi_lr_)
         m.c_xi_1_ = pym.Constraint(m.p,m.j, rule = cxi_1_)
