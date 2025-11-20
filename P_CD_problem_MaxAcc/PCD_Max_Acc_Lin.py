@@ -16,7 +16,7 @@ import pandas as pd
 # dispersion  = 'l1','l2','dsa','o1'
 # model = Linear Regression
 def P_cond_disp_(dispersion, dataset, target, features, 
-                          betaS, P, gamma, tau, theta,  M, X0):
+                          B0, P, gamma, tau, theta,  M, X0):
     
     #
     # Model definition
@@ -36,7 +36,7 @@ def P_cond_disp_(dispersion, dataset, target, features,
     m.n = pym.RangeSet(0,N-1)
     
     # Number of known regressors
-    Q = len(betaS)
+    Q = len(B0)
     m.q = pym.RangeSet(0,Q-1)
     
     #Number of new regressors
@@ -48,7 +48,7 @@ def P_cond_disp_(dispersion, dataset, target, features,
     
     # Target variable
     m.y = pym.Param(m.n, initialize=target)
-    
+    epsilon  = 1e-8
     
     # Dataset with exceeding column of 1s that refers to the bias term
     dataset_bias = dataset.copy()
@@ -67,9 +67,9 @@ def P_cond_disp_(dispersion, dataset, target, features,
     
     
     # beta coefficients of known regressors  B_0
-    def betaS_init(m,q,j):
-        return betaS.iloc[q][j]
-    m.betaS = pym.Param(m.q,m.j_b0, initialize=betaS_init,mutable=False)
+    def B0_init(m,q,j):
+        return B0.iloc[q][j]
+    m.B0 = pym.Param(m.q,m.j_b0, initialize=B0_init,mutable=False)
     
     
     #
@@ -84,7 +84,9 @@ def P_cond_disp_(dispersion, dataset, target, features,
         m.t = pym.Var(m.p, m.p,m.j, within = pym.Binary)
         m.zt  = pym.Var(m.p, m.p,m.j, within = pym.NonNegativeReals)
     elif dispersion == 'dsa':
-        m.z = pym.Var(m.p,m.p, m.j, within=pym.Binary)
+        m.r = pym.Var(m.p,m.p, m.j, within=pym.Binary)
+        m.xi_r = pym.Var(m.p,m.j, within=pym.Binary) # \xi_p^+
+        m.xi_l = pym.Var(m.p,m.j, within=pym.Binary) # \xi_p^-
     elif dispersion == 'o1':
         m.v = pym.Var(m.p,m.p, within = pym.Binary)
         m.w = pym.Var(m.p,m.q, within = pym.Binary)
@@ -121,14 +123,14 @@ def P_cond_disp_(dispersion, dataset, target, features,
             return pym.quicksum(m.ze[q,p,j] for j in m.j) >= gamma
         
         def c_ed_2_(m,q,p,j):
-            return m.ze[q,p,j] >= m.betaS[q,j] - m.beta[p,j]
+            return m.ze[q,p,j] >= m.B0[q,j] - m.beta[p,j]
         def c_ed_3_(m,q,p,j):
-            return m.ze[q,p,j] >= - (m.betaS[q,j] - m.beta[p,j])
+            return m.ze[q,p,j] >= - (m.B0[q,j] - m.beta[p,j])
         
         def c_ed_4_(m,q,p,j):
-            return m.ze[q,p,j] <= m.betaS[q,j] - m.beta[p,j] + M*(1-m.e[q,p,j])
+            return m.ze[q,p,j] <= m.B0[q,j] - m.beta[p,j] + M*(1-m.e[q,p,j])
         def c_ed_5_(m,q,p,j):
-            return m.ze[q,p,j] <= - (m.betaS[q,j] - m.beta[p,j]) + M*m.e[q,p,j]
+            return m.ze[q,p,j] <= - (m.B0[q,j] - m.beta[p,j]) + M*m.e[q,p,j]
         
         
         def c_id_1_(m,p,p_prime):
@@ -165,7 +167,7 @@ def P_cond_disp_(dispersion, dataset, target, features,
     elif dispersion == 'l2':
        
         def c_extra_dispersion(m,q,p):
-            return pym.quicksum((m.betaS[q,j] - m.beta[p,j])**2 for j in m.j ) >= gamma**2
+            return pym.quicksum((m.B0[q,j] - m.beta[p,j])**2 for j in m.j ) >= gamma**2
         
         def c_intra_dispersion(m,p,p_prime):
             if p < p_prime:
@@ -175,30 +177,41 @@ def P_cond_disp_(dispersion, dataset, target, features,
             
     elif dispersion =='dsa':
         def c_extra_dispersion(m,q,p):
-            return pym.quicksum( 1- m.xi[p,j] if m.betaS[q,j] != 0 else 0 for j in m.j  ) + pym.quicksum(m.xi[p,j] if m.betaS[q,j] == 0 else 0 for j in m.j  ) >= gamma
+            return pym.quicksum( 1- m.xi[p,j] if m.B0[q,j] != 0 else 0 for j in m.j  ) + pym.quicksum(m.xi[p,j] if m.B0[q,j] == 0 else 0 for j in m.j  ) >= gamma
         
         def c_intra_dispersion(m,p,p_prime):
             if p < p_prime:
-                return pym.quicksum(m.xi[p,j] + m.xi[p_prime,j]-2*m.z[p,p_prime,j] for j in m.j) >= gamma
+                return pym.quicksum(m.xi[p,j] + m.xi[p_prime,j]-2*m.r[p,p_prime,j] for j in m.j) >= gamma
             else: 
                 return pym.Constraint.Skip
         
-        def c_z1(m,p,p_prime,j):
+        def c_r1(m,p,p_prime,j):
             if p < p_prime:
-                return m.z[p,p_prime,j] <= m.xi[p,j]
+                return m.r[p,p_prime,j] <= m.xi[p,j]
             else: 
                 return pym.Constraint.Skip
-        def c_z2(m,p,p_prime,j):
+        def c_r2(m,p,p_prime,j):
             if p < p_prime:
-                return m.z[p,p_prime,j] <= m.xi[p_prime,j]
+                return m.r[p,p_prime,j] <= m.xi[p_prime,j]
             else: 
                 return pym.Constraint.Skip
-        def c_z3(m,p,p_prime,j):
+        def c_r3(m,p,p_prime,j):
             if p < p_prime:
-                return m.z[p,p_prime,j] >= m.xi[p,j] + m.xi[p_prime,j] -1
+                return m.r[p,p_prime,j] >= m.xi[p,j] + m.xi[p_prime,j] -1
             else: 
                 return pym.Constraint.Skip
-            
+        def cxi_(m,p,j):
+          return m.xi[p,j] == m.xi_r[p,j] + m.xi_l[p,j]
+        def cxi_lr_(m,p,j):
+          return m.xi_r[p,j] + m.xi_l[p,j] <= 1
+        def cxi_1_(m,p,j):
+          return m.beta[p,j] >= epsilon - M*(1- m.xi_r[p,j]  )
+        def cxi_2_(m,p,j):
+          return m.beta[p,j] <= M*m.xi_r[p,j]
+        def cxi_3_(m,p,j):
+          return m.beta[p,j] <= -epsilon + M*(1- m.xi_l[p,j]  )
+        def cxi_4_(m,p,j):
+          return m.beta[p,j] >= -M*m.xi_l[p,j]
                        
     elif dispersion == 'o1':
    
@@ -225,9 +238,9 @@ def P_cond_disp_(dispersion, dataset, target, features,
             else:
                 return pym.Constraint.Skip
         def c_extra_dispersion_2_(m, p,q):
-            return  pym.quicksum(m.beta[p,j]*m.X0[j] for j in m.j_b0)- pym.quicksum(m.betaS[q,j]*m.X0[j]   for j in m.j_b0) + M*(1-m.w[p,q]) >= gamma
+            return  pym.quicksum(m.beta[p,j]*m.X0[j] for j in m.j_b0)- pym.quicksum(m.B0[q,j]*m.X0[j]   for j in m.j_b0) + M*(1-m.w[p,q]) >= gamma
         def c_extra_dispersion_3_(m, p,q):
-            return  pym.quicksum(m.betaS[q,j]*m.X0[j]   for j in m.j_b0) -  pym.quicksum(m.beta[p,j]*m.X0[j] for j in m.j_b0) + M*m.w[p,q] >= gamma
+            return  pym.quicksum(m.B0[q,j]*m.X0[j]   for j in m.j_b0) -  pym.quicksum(m.beta[p,j]*m.X0[j] for j in m.j_b0) + M*m.w[p,q] >= gamma
              
        
     
@@ -279,11 +292,16 @@ def P_cond_disp_(dispersion, dataset, target, features,
     elif dispersion == 'dsa':
         m.c_Edis = pym.Constraint(m.q, m.p, rule = c_extra_dispersion)
         m.c_Idis = pym.Constraint(m.p, m.p, rule = c_intra_dispersion)
-        m.c_Idis_z1 = pym.Constraint(m.p, m.p, m.j, rule = c_z1)
-        m.c_Idis_z2 = pym.Constraint(m.p, m.p, m.j, rule = c_z2)
-        m.c_Idis_z3 = pym.Constraint(m.p, m.p, m.j, rule = c_z3)
-    
-
+        m.c_Idis_r1 = pym.Constraint(m.p, m.p, m.j, rule = c_z1)
+        m.c_Idis_r2 = pym.Constraint(m.p, m.p, m.j, rule = c_z2)
+        m.c_Idis_r3 = pym.Constraint(m.p, m.p, m.j, rule = c_z3)
+        m.c_xi_ = pym.Constraint(m.p,m.j, rule = cxi_)
+        m.c_xi_lr_ = pym.Constraint(m.p,m.j, rule = cxi_lr_)
+        m.c_xi_1_ = pym.Constraint(m.p,m.j, rule = cxi_1_)
+        m.c_xi_2_ = pym.Constraint(m.p,m.j, rule = cxi_2_)
+        m.c_xi_3_ = pym.Constraint(m.p,m.j, rule = cxi_3_)
+        m.c_xi_4_ = pym.Constraint(m.p,m.j, rule = cxi_4_)
+                            
     elif dispersion  == 'o1': 
        
         m.c_Edis1 = pym.Constraint(m.p, m.q, m.p, rule = c_extra_dispersion_1_)
@@ -297,8 +315,9 @@ def P_cond_disp_(dispersion, dataset, target, features,
     m.c_acc_p_ = pym.Constraint(m.p, rule = c_accuracy_p_)
     
     m.c_s1 = pym.Constraint(m.p, rule= c_sparsity_1_)
-    m.c_s2a = pym.Constraint(m.p, m.j, rule= c_sparsity_2a_)
-    m.c_s2b = pym.Constraint(m.p, m.j, rule= c_sparsity_2b_)
+    if dispersion != 'dsa':
+        m.c_s2a = pym.Constraint(m.p, m.j, rule= c_sparsity_2a_)
+        m.c_s2b = pym.Constraint(m.p, m.j, rule= c_sparsity_2b_)
     
     
     return m
