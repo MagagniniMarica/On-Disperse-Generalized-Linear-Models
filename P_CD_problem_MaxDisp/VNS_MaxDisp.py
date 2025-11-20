@@ -4,6 +4,12 @@
 
 This script contains the VNS strategy to handle the combinatorial part for the 
 problem of maximizing the dispersion.
+
+Notation comparison for paper reader: 
+- SQ = \B_0 (known models)
+- SP = \B (models to construct)
+- FSP = \Xi (set of P binary vectors)
+- fsp  = \xi (binary vector)
 """
 
 import time
