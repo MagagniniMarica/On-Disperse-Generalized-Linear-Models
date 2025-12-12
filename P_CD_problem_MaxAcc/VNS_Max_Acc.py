@@ -19,7 +19,7 @@ from P_CD_problem_MaxAcc.PCD_Max_Acc_VNS import P_cond_disp_
 from pyomo import environ as pym
 from pyomo.opt import TerminationCondition
 
-from P_CD_problem_MaxAcc.funs_vns import update_k_,  perturbation_dsa_, perturbation_, Hamming_epsilon
+from P_CD_problem_MaxAcc.funs_vns import update_k_,  perturbation_dsa_, perturbation_, abs_betaj_epsilon
 
 
 
@@ -140,8 +140,8 @@ def VNS(GLM, Solver_, K,TimeLimit,
                 new += 1            # counter new local solution incremented
                 obj_star, betaP_star = get_obj_sol_(instance)
 
-                # Check the hamming-epsilon distance definition is satisfied, if not skip solution
-                if dispersion == 'dsa' and not Hamming_epsilon(betaP_star,1e-8): 
+                # Check if all coefficients are s.t. |beta_j|>=epsilon, if not skip solution
+                if not abs_betaj_epsilon(betaP_star,1e-9): 
                     new -= 1
                     obj_star = 1e15   
                 ###############################################################

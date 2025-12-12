@@ -19,7 +19,7 @@ from pyomo import environ as pym
 from pyomo.opt import TerminationCondition
 
 
-from P_CD_problem_MaxDisp.funs_vns_Disp import update_k_,  perturbation_,perturbation_dsa_, min_hamming_distance, Hamming_epsilon
+from P_CD_problem_MaxDisp.funs_vns_Disp import update_k_,  perturbation_,perturbation_dsa_, min_hamming_distance, abs_betaj_epsilon
 
 
 # theta : maximal number of non-zero features 
@@ -132,7 +132,11 @@ def VNS(GLM, Solver_, K,TimeLimit,
                 new = new +1            # counter new local solution incremented
                 obj_star, betaP_star = get_obj_sol_(instance)
             
-                
+                # Check if all coefficients are s.t. |beta_j|>=epsilon, if not skip solution
+                if not abs_betaj_epsilon(betaP_star,1e-9): 
+                    new -= 1
+                    obj_star = 1e15
+                    
                 ###############################################################
                 # Check if betaP_star is better than the current one
                 ###############################################################
@@ -259,8 +263,8 @@ def VNS_dsa_(GLM, Solver_, K,TimeLimit,
                 # Overall Hamming dispersion between B (FSP_star), considering B_0 (SQ)
                 betaP_star_HD = min_hamming_distance(FSP_star, SQ) 
                 
-                # Check if the new dispersion is better and the hamming_epsilon dispersion definition is satisfied
-                if betaP_star_HD >= obj and Hamming_epsilon(FSP_star_coeff, 1e-8):
+                # Check if the new dispersion is better and all coefficients are s.t. |beta_j|>=epsilon
+                if betaP_star_HD >= obj and abs_betaj_epsilon(FSP_star_coeff, 1e-9):
                     obj = betaP_star_HD               
                     betaP = FSP_star_coeff
                     FSP = FSP_star

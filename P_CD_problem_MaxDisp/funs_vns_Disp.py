@@ -163,7 +163,7 @@ def min_hamming_distance(FSP, SQ):
                 
     # outer dsa dispersion 
 
-    eps = 1e-8
+    eps = 1e-9
     FSQ = [[0 if abs(x) < eps else 1 for x in SQ.iloc[q]] for q in range(len(SQ))]
     for p in FSP:
         for q in FSQ:
@@ -430,7 +430,7 @@ def perturbation_dsa_(GLM, dataset, target, features,P,J1,k,tau, theta, gamma,SQ
     
     return None, None, trash_valid_fsp, FSP_store
 
-def Hamming_epsilon(B, epsilon):
+def abs_betaj_epsilon(B, epsilon):
     """
     This function check if all non zero features have absolute value greater than epsilon
     """

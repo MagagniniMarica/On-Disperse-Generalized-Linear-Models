@@ -48,7 +48,7 @@ def P_cond_disp_(dispersion, dataset, target, features,
     
     # Target variable
     m.y = pym.Param(m.n, initialize=target)
-    epsilon  = 1e-8
+    epsilon  = 1e-9
     
     # Dataset with exceeding column of 1s that refers to the bias term
     dataset_bias = dataset.copy()
@@ -85,8 +85,6 @@ def P_cond_disp_(dispersion, dataset, target, features,
         m.zt  = pym.Var(m.p, m.p,m.j, within = pym.NonNegativeReals)
     elif dispersion == 'dsa':
         m.r = pym.Var(m.p,m.p, m.j, within=pym.Binary)
-        m.xi_r = pym.Var(m.p,m.j, within=pym.Binary) # \xi_p^+
-        m.xi_l = pym.Var(m.p,m.j, within=pym.Binary) # \xi_p^-
     elif dispersion == 'o1':
         m.v = pym.Var(m.p,m.p, within = pym.Binary)
         m.w = pym.Var(m.p,m.q, within = pym.Binary)
@@ -94,7 +92,9 @@ def P_cond_disp_(dispersion, dataset, target, features,
         
     # sparsity
     m.xi = pym.Var(m.p,m.j, within=pym.Binary)
-    
+    m.xi_r = pym.Var(m.p,m.j, within=pym.Binary) # \xi^+p
+    m.xi_l = pym.Var(m.p,m.j, within=pym.Binary) # \xi^-p
+
     #
     # Objective function 
     #
@@ -200,18 +200,7 @@ def P_cond_disp_(dispersion, dataset, target, features,
                 return m.r[p,p_prime,j] >= m.xi[p,j] + m.xi[p_prime,j] -1
             else: 
                 return pym.Constraint.Skip
-        def cxi_(m,p,j):
-          return m.xi[p,j] == m.xi_r[p,j] + m.xi_l[p,j]
-        def cxi_lr_(m,p,j):
-          return m.xi_r[p,j] + m.xi_l[p,j] <= 1
-        def cxi_1_(m,p,j):
-          return m.beta[p,j] >= epsilon - M*(1- m.xi_r[p,j]  )
-        def cxi_2_(m,p,j):
-          return m.beta[p,j] <= M*m.xi_r[p,j]
-        def cxi_3_(m,p,j):
-          return m.beta[p,j] <= -epsilon + M*(1- m.xi_l[p,j]  )
-        def cxi_4_(m,p,j):
-          return m.beta[p,j] >= -M*m.xi_l[p,j]
+        
                        
     elif dispersion == 'o1':
    
@@ -259,13 +248,22 @@ def P_cond_disp_(dispersion, dataset, target, features,
         
     # Sparsity 
     def c_sparsity_1_(m,p):
-        return pym.quicksum(m.xi[p,j] for j in m.j) <= theta   
-        
-    def c_sparsity_2a_(m,p,j):
-        return -M*m.xi[p,j] <= m.beta[p,j]
-    def c_sparsity_2b_(m,p,j):
-        return  m.beta[p,j] <= M*m.xi[p,j] 
-        
+        return pym.quicksum(m.xi[p,j] for j in m.j) <= theta
+
+    def cxi_(m,p,j):
+          return m.xi[p,j] == m.xi_r[p,j] + m.xi_l[p,j]
+    def cxi_lr_(m,p,j):
+        return m.xi_r[p,j] + m.xi_l[p,j] <= 1
+    def cxi_1_(m,p,j):
+        return m.beta[p,j] >= epsilon - M*(1- m.xi_r[p,j]  )
+    def cxi_2_(m,p,j):
+        return m.beta[p,j] <= M*m.xi_r[p,j]
+    def cxi_3_(m,p,j):
+        return m.beta[p,j] <= -epsilon + M*(1- m.xi_l[p,j]  )
+    def cxi_4_(m,p,j):
+        return m.beta[p,j] >= -M*m.xi_l[p,j]
+
+
     
     
     #
@@ -295,12 +293,7 @@ def P_cond_disp_(dispersion, dataset, target, features,
         m.c_Idis_r1 = pym.Constraint(m.p, m.p, m.j, rule = c_r1)
         m.c_Idis_r2 = pym.Constraint(m.p, m.p, m.j, rule = c_r2)
         m.c_Idis_r3 = pym.Constraint(m.p, m.p, m.j, rule = c_r3)
-        m.c_xi_ = pym.Constraint(m.p,m.j, rule = cxi_)
-        m.c_xi_lr_ = pym.Constraint(m.p,m.j, rule = cxi_lr_)
-        m.c_xi_1_ = pym.Constraint(m.p,m.j, rule = cxi_1_)
-        m.c_xi_2_ = pym.Constraint(m.p,m.j, rule = cxi_2_)
-        m.c_xi_3_ = pym.Constraint(m.p,m.j, rule = cxi_3_)
-        m.c_xi_4_ = pym.Constraint(m.p,m.j, rule = cxi_4_)
+        
                             
     elif dispersion  == 'o1': 
        
@@ -314,10 +307,14 @@ def P_cond_disp_(dispersion, dataset, target, features,
     
     m.c_acc_p_ = pym.Constraint(m.p, rule = c_accuracy_p_)
     
+    # sparsity
     m.c_s1 = pym.Constraint(m.p, rule= c_sparsity_1_)
-    if dispersion != 'dsa':
-        m.c_s2a = pym.Constraint(m.p, m.j, rule= c_sparsity_2a_)
-        m.c_s2b = pym.Constraint(m.p, m.j, rule= c_sparsity_2b_)
+    m.c_xi_ = pym.Constraint(m.p,m.j, rule = cxi_)
+    m.c_xi_lr_ = pym.Constraint(m.p,m.j, rule = cxi_lr_)
+    m.c_xi_1_ = pym.Constraint(m.p,m.j, rule = cxi_1_)
+    m.c_xi_2_ = pym.Constraint(m.p,m.j, rule = cxi_2_)
+    m.c_xi_3_ = pym.Constraint(m.p,m.j, rule = cxi_3_)
+    m.c_xi_4_ = pym.Constraint(m.p,m.j, rule = cxi_4_)
     
     
     return m
