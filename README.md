@@ -19,7 +19,7 @@ It includes all datasets and the supporting functions required to reproduce the 
   Contains the raw datasets used for the experiments.
 
 - **P_CD_problem_MaxAcc/**  
-  Contains the `.py` files implementing and solving (both with heuristic and optimal solvers) the (A-PDP-GLM) problem.
+  Contains the `.py` files implementing and solving (both with heuristic and optimal solvers) the (A-PDP-GLM) problem. 
 
 - **P_CD_problem_MaxDisp/**  
   Contains the `.py` files implementing and solving (both with heuristic and optimal solvers) the (D-PDP-GLM) problem.

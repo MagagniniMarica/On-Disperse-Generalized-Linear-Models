@@ -698,7 +698,7 @@ def abs_betaj_epsilon(B, epsilon):
     """
     for p, beta_dict in B.items():
         for f, value in beta_dict.items():
-            # Controllo del valore assoluto
+            # |beta_j| < epsilon
             if abs(value) < epsilon:
                 return False
     return True
