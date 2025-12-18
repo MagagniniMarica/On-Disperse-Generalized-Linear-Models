@@ -140,8 +140,8 @@ def VNS(GLM, Solver_, K,TimeLimit,
                 new += 1            # counter new local solution incremented
                 obj_star, betaP_star = get_obj_sol_(instance)
 
-                # Check if all coefficients are s.t. |beta_j|>=epsilon, if not skip solution
-                if not abs_betaj_epsilon(betaP_star,1e-9): 
+                # when 'dsa' Check if all coefficients are s.t. |beta_j|>=epsilon, if not skip solution
+                if dispersion == 'dsa' and not abs_betaj_epsilon(betaP_star,1e-9): 
                     new -= 1
                     obj_star = 1e15   
                 ###############################################################

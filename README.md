@@ -1,14 +1,14 @@
-# Source Code of Experiments in "Multiple Dispersed Generalized Linear Models"
+# Source Code of Experiments in "On Disperse Generalized Linear Models"
 
 This repository contains the source code used for the experiments in the paper:
 
-> **"Multiple Dispersed Generalized Linear Models"**  
+> **"On Disperse Generalized Linear Models"**  
 > by *Emilio Carrizosa, Renato De Leone, and Marica Magagnini*
 
 ---
 
 The codes in this repository implement the (A-PDP-GLM) and (D-PDP-GLM) problems, as well as the heuristic algorithm proposed in the paper.  
-It includes all datasets and the supporting functions required to reproduce the experiments described in *Multiple Dispersed Generalized Linear Models*.
+It includes all datasets and the supporting functions required to reproduce the experiments described in *On Disperse Generalized Linear Models*.
 
 ---
 
