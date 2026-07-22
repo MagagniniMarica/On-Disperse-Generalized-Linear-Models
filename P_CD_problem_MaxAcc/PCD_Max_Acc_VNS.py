@@ -16,7 +16,7 @@ import pandas as pd
 
 
 
-# dispersion  = 'l1','l2','o2' 
+# dispersion  = 'l1','l2','o2','dsa'
 # GLM = regression, logisticRegression, PoissonRegression
 # FSP combinatorial input provided by vsn
 def P_cond_disp_(GLM,dispersion, dataset, target, features, FSP,
@@ -26,7 +26,7 @@ def P_cond_disp_(GLM,dispersion, dataset, target, features, FSP,
     #
     # Model definition
     #
-    m = pym.ConcreteModel(name = f'Local Problem A-PDP-{GLM}')
+    m = pym.ConcreteModel(name = f'Local P-CD Problem - MAX accuracy - {GLM}')
     
     #
     # Indexes
@@ -58,18 +58,30 @@ def P_cond_disp_(GLM,dispersion, dataset, target, features, FSP,
     
     # Dataset with exceeding column of 1s that refers to the bias term
     dataset_bias = dataset.copy()
-    dataset_bias['bias'] = np.ones(len(dataset))
-    def x_init(m,n,j):
-        return dataset_bias.iloc[n][j]
-    m.x = pym.Param(m.n,m.j_b0, initialize=x_init, mutable=True)
+    dataset_bias['bias'] = 1.0
+    x_dict = {(n, j): dataset_bias.iloc[n, dataset_bias.columns.get_loc(j)]
+            for n in range(len(dataset_bias))
+            for j in dataset_bias.columns}
+    m.x = pym.Param(m.n, m.j_b0, initialize=x_dict, mutable=True, within = pym.Reals)
     
     
-    # For dispersion among predictors
+    # If the dispersion is on the output, we need to initialize the X^0 set
     ############   
     if  dispersion == 'o1':
-        m.X0  = pym.Param(m.j_b0, initialize=X0)
-    ############   
-    
+        if type(X0) == pd.core.series.Series:
+            len_X0 = 1
+        else:
+            len_X0 = len(X0)
+        if len_X0 == 1:
+            m.X0  = pym.Param(m.j_b0, initialize=X0)
+        else:
+            m.n0 = pym.RangeSet(0,len_X0-1)
+            def X0_init(m,n0,j):
+                return X0.iloc[n0][j]
+            m.X0 = pym.Param(m.n0,m.j_b0, initialize=X0_init, mutable=True)
+    ############ 
+
+
     if dispersion  == 'o1':
         def v_init(m,p,p_prime):
             return V[p,p_prime]
@@ -104,8 +116,10 @@ def P_cond_disp_(GLM,dispersion, dataset, target, features, FSP,
     #
     # variables
     #
-    m.beta = pym.Var(m.p, m.j_b0, within=pym.Reals, bounds= (-30,30))
-    
+    ulb = (-30,30) if J <20 else (-50,50) if  (J > 20 and J < 70) else (-1e5, 1e5)
+    m.beta = pym.Var(m.p, m.j_b0, within=pym.Reals,  bounds=ulb) 
+        
+
 
     # Fix to zero some variables as a result of the combinatorial part provided by the vns
     for p in range(len(FSP)):
@@ -193,15 +207,17 @@ def P_cond_disp_(GLM,dispersion, dataset, target, features, FSP,
             
     
     elif dispersion == 'o1':
-        def c_intra_dispersion_(m, p, p_prime):
-            if p < p_prime:
-                return (pym.quicksum(m.beta[p,j]*m.X0[j]   for j in m.j_b0) -  pym.quicksum(m.beta[p_prime,j]*m.X0[j] for j in m.j_b0)) * (2*m.v[p,p_prime]-1) >= gamma
-            else: 
-                return pym.Constraint.Skip
-        
-        def c_extra_dispersion_(m, p,q):
-            return ( pym.quicksum(m.beta[p,j]*m.X0[j] for j in m.j_b0)- pym.quicksum(m.SQ[q,j]*m.X0[j]   for j in m.j_b0)) * (2*m.w[p,q] - 1) >= gamma
-        
+        if len_X0 == 1:
+            def c_intra_dispersion_(m, p, p_prime):
+                if p < p_prime:
+                    return (pym.quicksum(m.beta[p,j]*m.X0[j]   for j in m.j_b0) -  pym.quicksum(m.beta[p_prime,j]*m.X0[j] for j in m.j_b0)) * (2*m.v[p,p_prime]-1) >= gamma
+                else: 
+                    return pym.Constraint.Skip
+            
+            def c_extra_dispersion_(m, p,q):
+                return ( pym.quicksum(m.beta[p,j]*m.X0[j] for j in m.j_b0)- pym.quicksum(m.SQ[q,j]*m.X0[j]   for j in m.j_b0)) * (2*m.w[p,q] - 1) >= gamma
+        else:
+                           print('Not implemented.')    
     elif dispersion == 'dsa':
         pass
              
@@ -238,9 +254,11 @@ def P_cond_disp_(GLM,dispersion, dataset, target, features, FSP,
         m.c_Idis = pym.Constraint(m.p, m.p, rule = c_intra_dispersion)
     
     elif dispersion == 'o1':
-        m.c_Edis = pym.Constraint(m.p, m.q, rule = c_extra_dispersion_)
-        m.c_Idis = pym.Constraint(m.p, m.p, rule = c_intra_dispersion_)
-               
+        if len_X0 == 1:
+            m.c_Edis = pym.Constraint(m.p, m.q, rule = c_extra_dispersion_)
+            m.c_Idis = pym.Constraint(m.p, m.p, rule = c_intra_dispersion_)
+        else:
+            print('Not implemented.')
 
     m.c_acc_p_ = pym.Constraint(m.p, rule = c_accuracy_p_)
 

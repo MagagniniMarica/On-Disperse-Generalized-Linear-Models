@@ -1,15 +1,17 @@
 # -*- coding: utf-8 -*-
 """
+Created on Thu Jun 12 14:57:01 2025
 
-@author: Marica Magagnini
+@author: Marica
 
 Seoul Bike rent per hour
-path = '../Datasets/'
-Poission Regression dataset
+path = 'C:/Users/Maric/Dropbox/Dataset/SeoulBike/'
+Poission REgression dataset
 """
 
 import pandas as pd
 from sklearn import preprocessing
+# from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.base import BaseEstimator, TransformerMixin
 
@@ -35,13 +37,13 @@ class Encoder_(BaseEstimator, TransformerMixin):
         for col in X.columns:
             unique_vals = X[col].nunique()
             if unique_vals == 2:
-                # LabelEncoder x binary
+                # LabelEncoder per binarie
                 le = LabelEncoder()
                 le.fit(X[col])
                 self.encoders[col] = ('label', le)
             else:
-                # OneHotEncoder x multicategorical
-                ohe = OneHotEncoder(sparse_output=False) 
+                # OneHotEncoder per multicategoria
+                ohe = OneHotEncoder(sparse_output=False)  # drop='first' evita multicollinearità
                 ohe.fit(X[[col]])
                 self.encoders[col] = ('onehot', ohe)
         return self
@@ -76,7 +78,7 @@ def data(path, task):
     
     
     # Categorical Variables
-    
+    # Applica l'encoder automatico
     encoder = Encoder_()
     bs2 = encoder.fit_transform(bs1[bs1_cat_f])
     for f in bs2.columns:
@@ -88,11 +90,17 @@ def data(path, task):
     features=bs3.columns              # names of columns vector (Index)
     features_type=feature_type(bs3)   # type of each feature vector (Dict)
     
+    
+    # Split into training and test sets
+    # bs3_train, bs3_test, target_train, target_test = train_test_split(bs3, target, test_size=0.2, random_state=42)
 
+    
     #Normalization
     min_max_scaler = preprocessing.MinMaxScaler()
     BikeSeoul_scaled =pd.DataFrame( min_max_scaler.fit_transform(bs3),  columns= features)
-  
+    # BikeSeoul_test_scaled =pd.DataFrame( min_max_scaler.fit_transform(bs3_test),  columns= features)
     
-   
+    
+
     return BikeSeoul_scaled, target, features, features_type
+    # return BikeSeoul_train_scaled, BikeSeoul_test_scaled, target_train, target_test, features, features_type

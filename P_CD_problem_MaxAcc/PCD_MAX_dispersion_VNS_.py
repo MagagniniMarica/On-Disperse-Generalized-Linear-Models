@@ -1,12 +1,8 @@
-# -*- coding: utf-8 -*-
 """
+@author: Marica
 
-@author: Marica Magagnini
-
-This is the implementation of the Local maximum dispersion Problem  (D-PDP-GLM).
-It includes :
-    - accuracy constraints
-    - Fixed feature selection structure (FSP). 
+Fixed tau (accuracy constraint) and theta (feature selected), this problem 
+compute P GLM maximizing the dispersion. 
 
 The combinatorial part of this problem is managed by a VNS strategy.
 
@@ -15,9 +11,9 @@ from pyomo import environ as pym
 import numpy as np
 import pandas as pd
 
-# dispersion  = 'l1','l2','o1' 
-# GLM = regression, logisticRegression, PoissonRegression
-# FSP, V,W,T,E combinatorial input provided by vsn
+# dispersion  = 'l1','l2','o2' 
+# GLM = regression, logisticRegression, ..  !!Affects the accuracy constraint and the obj!!
+# FSP combinatorial input provided by vsn
 def P_max_disp_(GLM,dispersion, dataset, target, features, FSP,
                           SQ, P, tau, X0, 
                           V = None,W = None, T=None, E=None):
@@ -25,7 +21,7 @@ def P_max_disp_(GLM,dispersion, dataset, target, features, FSP,
     #
     # Model definition
     #
-    m = pym.ConcreteModel(name = f'Local D-PDP-{GLM}-{dispersion}')
+    m = pym.ConcreteModel(name = f'P-CD Problem - MAX dispersion - {GLM}')
 
     #
     # Indexes
@@ -57,16 +53,27 @@ def P_max_disp_(GLM,dispersion, dataset, target, features, FSP,
     
     # Dataset with exceeding column of 1s that refers to the bias term
     dataset_bias = dataset.copy()
-    dataset_bias['bias'] = np.ones(len(dataset))
-    def x_init(m,n,j):
-        return dataset_bias.iloc[n][j]
-    m.x = pym.Param(m.n,m.j_b0, initialize=x_init, mutable=True)
+    dataset_bias['bias'] = 1.0
+    x_dict = {(n, j): dataset_bias.iloc[n, dataset_bias.columns.get_loc(j)]
+          for n in range(len(dataset_bias))
+          for j in dataset_bias.columns}
+    m.x = pym.Param(m.n, m.j_b0, initialize=x_dict, mutable=True, within = pym.Reals)
     
     
     # If the dispersion is on the output, we need to initialize the X^0 set
     ############   
-    if dispersion == 'o1':
-        m.X0  = pym.Param(m.j_b0, initialize=X0)
+    if dispersion == 'o2' or dispersion == 'o1':
+        if type(X0) == pd.core.series.Series:
+            len_X0 = 1
+        else:
+            len_X0 = len(X0)
+        if len_X0 == 1:
+            m.X0  = pym.Param(m.j_b0, initialize=X0)
+        else:
+            m.n0 = pym.RangeSet(0,len_X0-1)
+            def X0_init(m,n0,j):
+                return X0.iloc[n0][j]
+            m.X0 = pym.Param(m.n0,m.j_b0, initialize=X0_init, mutable=True)
     ############   
     
     if dispersion  == 'o1':
@@ -76,6 +83,7 @@ def P_max_disp_(GLM,dispersion, dataset, target, features, FSP,
         def w_init(m,p,q):
             return W[p,q]
         m.w = pym.Param(m.p, m.q, initialize=w_init, mutable=True)
+     
 
     if dispersion  == 'l1':
         #e[ j, p,p_prime] = 1 if beta[p,j] <= beta[p_prime,j]  else -1 for p!=p_prime
@@ -92,7 +100,7 @@ def P_max_disp_(GLM,dispersion, dataset, target, features, FSP,
     
     
     
-    # beta coefficients of known regressors  B_0
+    # beta coefficients of known regressors 
     def SQ_init(m,q,j):
         return SQ.iloc[q][j]
     m.SQ = pym.Param(m.q,m.j_b0, initialize=SQ_init,mutable=False)
@@ -101,8 +109,9 @@ def P_max_disp_(GLM,dispersion, dataset, target, features, FSP,
     #
     # variables
     #
+    ulb = (-30,30) if J <20 else (-50,50) if  (J > 20 and J < 70) else (-1e5, 1e5)
     m.obj =  pym.Var(within=pym.NonNegativeReals) 
-    m.beta = pym.Var(m.p, m.j_b0, within=pym.Reals, bounds= (-30,30))
+    m.beta = pym.Var(m.p, m.j_b0, within=pym.Reals,  bounds=ulb) 
     
 
     # Fix to zero some variables as a result of the combinatorial part provided by the vns
@@ -110,7 +119,7 @@ def P_max_disp_(GLM,dispersion, dataset, target, features, FSP,
         for f_j, f in zip(range(1,J1),features):
             if FSP[p][f_j] == 0:
                 m.beta[p, f].fix(0)
-               
+                # print(f'{f_j} : {f} - {FSP[p][f_j]}')
     
     #
     # Objective function 
@@ -169,19 +178,39 @@ def P_max_disp_(GLM,dispersion, dataset, target, features, FSP,
             else: 
                 return pym.Constraint.Skip
             
-
+        
+    elif dispersion == 'o2':
+        if len_X0 == 1:
+            def c_extra_dispersion(m, q, p):
+                return  (pym.quicksum(m.SQ[q,j]*m.X0[j]   for j in m.j_b0) -  pym.quicksum(m.beta[p,j]*m.X0[j] for j in m.j_b0))**2 >= m.obj**2
+            def c_intra_dispersion(m, p, p_prime):
+                if p < p_prime:
+                    return (pym.quicksum(m.beta[p,j]*m.X0[j]   for j in m.j_b0) -  pym.quicksum(m.beta[p_prime,j]*m.X0[j] for j in m.j_b0))**2 >= m.obj**2
+                else: 
+                    return pym.Constraint.Skip
+        else:
+            def c_extra_dispersion(m, q, p, n0):
+                return  (pym.quicksum(m.SQ[q,j]*m.X0[n0,j]   for j in m.j_b0) -  pym.quicksum(m.beta[p,j]*m.X0[n0,j] for j in m.j_b0))**2 >= m.obj**2
+            def c_intra_dispersion(m, p, p_prime, n0):
+                if p != p_prime:
+                    return (pym.quicksum(m.beta[p,j]*m.X0[n0,j]   for j in m.j_b0) -  pym.quicksum(m.beta[p_prime,j]*m.X0[n0,j] for j in m.j_b0))**2 >= m.obj**2
+                else: 
+                    return pym.Constraint.Skip
     
     
     elif dispersion == 'o1':
-        def c_intra_dispersion_(m, p, p_prime):
-            if p < p_prime:
-                return (pym.quicksum(m.beta[p,j]*m.X0[j]   for j in m.j_b0) -  pym.quicksum(m.beta[p_prime,j]*m.X0[j] for j in m.j_b0)) * (2*m.v[p,p_prime]-1) >= m.obj
-            else: 
-                return pym.Constraint.Skip
-        
-        def c_extra_dispersion_(m, p,q):
-            return ( pym.quicksum(m.beta[p,j]*m.X0[j] for j in m.j_b0)- pym.quicksum(m.SQ[q,j]*m.X0[j]   for j in m.j_b0)) * (2*m.w[p,q] - 1) >= m.obj
-    
+        if len_X0 == 1:
+               
+            def c_intra_dispersion_(m, p, p_prime):
+                if p < p_prime:
+                    return (pym.quicksum(m.beta[p,j]*m.X0[j]   for j in m.j_b0) -  pym.quicksum(m.beta[p_prime,j]*m.X0[j] for j in m.j_b0)) * (2*m.v[p,p_prime]-1) >= m.obj
+                else: 
+                    return pym.Constraint.Skip
+            
+            def c_extra_dispersion_(m, p,q):
+                return ( pym.quicksum(m.beta[p,j]*m.X0[j] for j in m.j_b0)- pym.quicksum(m.SQ[q,j]*m.X0[j]   for j in m.j_b0)) * (2*m.w[p,q] - 1) >= m.obj
+        else:
+            print('..to do..')
     elif dispersion == 'dsa':
         pass
              
@@ -199,7 +228,7 @@ def P_max_disp_(GLM,dispersion, dataset, target, features, FSP,
     def c_accuracy_p_(m, p):
         if GLM == 'Lin': 
             return sum( (m.y[n] - beta_xn_(m, n,p) )**2 for n in m.n) <= N*(tau)
-        elif GLM == 'Log':
+        elif GLM == 'Log':    
             return sum( (1 - m.y[n]) * beta_xn_(m, n,p) + pym.log(1 + pym.exp(-beta_xn_(m, n,p))) 
                                  for n in m.n ) <= N*tau
         
@@ -221,11 +250,17 @@ def P_max_disp_(GLM,dispersion, dataset, target, features, FSP,
         m.c_Edis = pym.Constraint(m.q, m.p, rule = c_extra_dispersion)
         m.c_Idis = pym.Constraint(m.p, m.p, rule = c_intra_dispersion)
     
-    
+    elif dispersion == 'o2':
+        if len_X0 == 1:
+            m.c_Edis = pym.Constraint(m.q, m.p, rule = c_extra_dispersion)
+            m.c_Idis = pym.Constraint(m.p, m.p, rule = c_intra_dispersion)
+        else:
+            m.c_Edis = pym.Constraint(m.q, m.p, m.n0, rule = c_extra_dispersion)
+            m.c_Idis = pym.Constraint(m.p, m.p, m.n0, rule = c_intra_dispersion)
     elif dispersion == 'o1':
-        m.c_Edis = pym.Constraint(m.p, m.q, rule = c_extra_dispersion_)
-        m.c_Idis = pym.Constraint(m.p, m.p, rule = c_intra_dispersion_)
-        
+        if len_X0 == 1:
+            m.c_Edis = pym.Constraint(m.p, m.q, rule = c_extra_dispersion_)
+            m.c_Idis = pym.Constraint(m.p, m.p, rule = c_intra_dispersion_)
                
 
     m.c_acc_p_ = pym.Constraint(m.p, rule = c_accuracy_p_)

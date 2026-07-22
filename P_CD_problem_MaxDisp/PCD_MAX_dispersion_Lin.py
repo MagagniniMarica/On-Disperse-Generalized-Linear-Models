@@ -3,7 +3,9 @@
 
 @author: Marica Magagnini
 
-D-PDP-GLM problem implementation.
+Fixed tau (accuracy constraint) and theta (feature selected), this problem 
+compute P GLM maximizing the dispersion 
+
 This problem is only for Linear case, which can be solved by gurobi 
 
 """
@@ -13,12 +15,12 @@ import numpy as np
 import pandas as pd
 
 def P_max_dispersion_Lin_(dispersion, dataset, target, features, M, 
-                 B0, P, tau, theta, X0):
+                 betaS, P, tau, theta, X0):
     
     #
     # Model definition
     #
-    m = pym.ConcreteModel(name = 'D-PDP-{GLM} - Lin')
+    m = pym.ConcreteModel(name = 'P-CD Problem - MAX dispersion - Lin')
     
 
     #
@@ -34,7 +36,7 @@ def P_max_dispersion_Lin_(dispersion, dataset, target, features, M,
     m.n = pym.Set(initialize=dataset.index.tolist())
     
     # Number of known regressors
-    Q = len(B0)
+    Q = len(betaS)
     m.q = pym.RangeSet(0,Q-1)
     
     #Number of new regressors
@@ -46,35 +48,46 @@ def P_max_dispersion_Lin_(dispersion, dataset, target, features, M,
     
     # Target variable
     m.y = pym.Param(m.n, initialize=target)
-    epsilon  = 1e-9
+    
   
-    
-    # Dataset with exceeding column of 1s that refers to the bias term
+     
     dataset_bias = dataset.copy()
-    dataset_bias['bias'] = np.ones(len(dataset))
-    def x_init(m,n,j):
-        return dataset_bias.iloc[n][j]
-    m.x = pym.Param(m.n,m.j_b0, initialize=x_init, mutable=True)
+    dataset_bias['bias'] = 1.0
+    x_dict = {(n, j): dataset_bias.iloc[n, dataset_bias.columns.get_loc(j)]
+          for n in range(len(dataset_bias))
+          for j in dataset_bias.columns}
+    m.x = pym.Param(m.n, m.j_b0, initialize=x_dict, mutable=True, within = pym.Reals)
     
     
-    # If the dispersion is on the response, we need to initialize  X^0 
+    # If the dispersion is on the output, we need to initialize the X^0 set
     ############   
     if  dispersion == 'o1':
-        m.X0  = pym.Param(m.j_b0, initialize=X0)
-    ############ 
+        if type(X0) == pd.core.series.Series:
+            len_X0 = 1
+        else:
+            len_X0 = len(X0)
+        if len_X0 == 1:
+            m.X0  = pym.Param(m.j_b0, initialize=X0)
+        else:
+            m.n0 = pym.RangeSet(0,len_X0-1)
+            def X0_init(m,n0,j):
+                return X0.iloc[n0][j]
+            m.X0 = pym.Param(m.n0,m.j_b0, initialize=X0_init, mutable=True)
+    ############   
     
     
     
     # beta coefficients of known regressors 
-    def B0_init(m,q,j):
-        return B0.iloc[q][j]
-    m.B0 = pym.Param(m.q,m.j_b0, initialize=B0_init,mutable=False)
+    def betaS_init(m,q,j):
+        return betaS.iloc[q][j]
+    m.betaS = pym.Param(m.q,m.j_b0, initialize=betaS_init,mutable=False)
     
     
     #
     # variables
     #
-    m.beta = pym.Var(m.p, m.j_b0, within=pym.Reals, bounds= (-30,30))
+    ulb = (-30,30) if len(features) <20 else (-50,50) if  (len(features) > 20 and len(features) < 70) else (-1e5, 1e5)
+    m.beta = pym.Var(m.p, m.j_b0, within=pym.Reals, bounds=ulb) #(-30,30) BH, (-50,50) ITT, (-1e5, 1e5) CC
     m.obj =  pym.Var(within=pym.NonNegativeReals) 
 
     
@@ -84,16 +97,17 @@ def P_max_dispersion_Lin_(dispersion, dataset, target, features, M,
         m.t = pym.Var(m.p, m.p,m.j, within = pym.Binary)
         m.zt  = pym.Var(m.p, m.p,m.j, within = pym.NonNegativeReals)
     elif dispersion == 'dsa':
-        m.r = pym.Var(m.p,m.p, m.j, within=pym.Binary)
-        m.xi_r = pym.Var(m.p,m.j, within=pym.Binary) # \xi_p^+
-        m.xi_l = pym.Var(m.p,m.j, within=pym.Binary) # \xi_p^-
+        m.z = pym.Var(m.p,m.p, m.j, within=pym.Binary)
     elif dispersion == 'o1':
         m.v = pym.Var(m.p,m.p, within = pym.Binary)
         m.w = pym.Var(m.p,m.q, within = pym.Binary)
         
     # sparsity
     m.xi = pym.Var(m.p,m.j, within=pym.Binary)
-
+    
+    
+     
+    #
     # Objective function 
     #
     def objfunction_(m):
@@ -111,14 +125,14 @@ def P_max_dispersion_Lin_(dispersion, dataset, target, features, M,
             return pym.quicksum(m.ze[q,p,j] for j in m.j) >= m.obj
         
         def c_ed_2_(m,q,p,j):
-            return m.ze[q,p,j] >= m.B0[q,j] - m.beta[p,j]
+            return m.ze[q,p,j] >= m.betaS[q,j] - m.beta[p,j]
         def c_ed_3_(m,q,p,j):
-            return m.ze[q,p,j] >= - (m.B0[q,j] - m.beta[p,j])
+            return m.ze[q,p,j] >= - (m.betaS[q,j] - m.beta[p,j])
         
         def c_ed_4_(m,q,p,j):
-            return m.ze[q,p,j] <= m.B0[q,j] - m.beta[p,j] + M*(1-m.e[q,p,j])
+            return m.ze[q,p,j] <= m.betaS[q,j] - m.beta[p,j] + M*(1-m.e[q,p,j])
         def c_ed_5_(m,q,p,j):
-            return m.ze[q,p,j] <= - (m.B0[q,j] - m.beta[p,j]) + M*m.e[q,p,j]
+            return m.ze[q,p,j] <= - (m.betaS[q,j] - m.beta[p,j]) + M*m.e[q,p,j]
         
         
         def c_id_1_(m,p,p_prime):
@@ -128,24 +142,27 @@ def P_max_dispersion_Lin_(dispersion, dataset, target, features, M,
                 return pym.Constraint.Skip
         
         def c_id_2_(m,p,p_prime,j):
-            if p < p_prime:  
+            if p < p_prime:
+            # if p != p_prime:    
                 return m.zt[p,p_prime,j] >= m.beta[p,j] - m.beta[p_prime,j]
             else: 
                 return pym.Constraint.Skip
         def c_id_3_(m,p,p_prime,j):
             if p < p_prime:
-
+            # if p != p_prime:
                 return m.zt[p,p_prime, j] >= - (m.beta[p,j] - m.beta[p_prime,j])
             else: 
                 return pym.Constraint.Skip
         
         def c_id_4_(m,p,p_prime,j):
             if p < p_prime:
+            # if p != p_prime:
                 return m.zt[p,p_prime,j] <= m.beta[p,j] - m.beta[p_prime,j] + M*(1-m.t[p,p_prime,j])
             else: 
                 return pym.Constraint.Skip
         def c_id_5_(m,p,p_prime,j):
             if p < p_prime:
+            # if p != p_prime:
                 return m.zt[p,p_prime, j] <= - (m.beta[p,j] - m.beta[p_prime,j]) + M*m.t[p,p_prime,j]
             else: 
                 return pym.Constraint.Skip
@@ -156,9 +173,10 @@ def P_max_dispersion_Lin_(dispersion, dataset, target, features, M,
     elif dispersion == 'l2':
        
         def c_extra_dispersion(m,q,p):
-            return pym.quicksum((m.B0[q,j] - m.beta[p,j])**2 for j in m.j ) >= m.obj**2
+            return pym.quicksum((m.betaS[q,j] - m.beta[p,j])**2 for j in m.j ) >= m.obj**2
         
         def c_intra_dispersion(m,p,p_prime):
+            # if p < p_prime:
             if p != p_prime:
                 return pym.quicksum((m.beta[p,j] - m.beta[p_prime,j])**2 for j in m.j ) >= m.obj**2
             else: 
@@ -168,74 +186,63 @@ def P_max_dispersion_Lin_(dispersion, dataset, target, features, M,
         
     elif dispersion =='dsa':
         def c_extra_dispersion(m,q,p):
-            return pym.quicksum( 1- m.xi[p,j] for j in m.j  if m.B0[q,j] != 0  ) + pym.quicksum(m.xi[p,j]   for j in m.j  if m.B0[q,j] == 0) >= m.obj
+            return pym.quicksum( 1- m.xi[p,j] for j in m.j  if m.betaS[q,j] != 0  ) + pym.quicksum(m.xi[p,j]   for j in m.j  if m.betaS[q,j] == 0) >= m.obj
         
         def c_intra_dispersion(m,p,p_prime):
             if p < p_prime:
-                return pym.quicksum(m.xi[p,j] + m.xi[p_prime,j]-2*m.r[p,p_prime,j] for j in m.j) >= m.obj
+                return pym.quicksum(m.xi[p,j] + m.xi[p_prime,j]-2*m.z[p,p_prime,j] for j in m.j) >= m.obj
             else: 
                 return pym.Constraint.Skip
         
-        def c_r1(m,p,p_prime,j):
+        def c_z1(m,p,p_prime,j):
             if p < p_prime:
-                return m.r[p,p_prime,j] <= m.xi[p,j]
+                return m.z[p,p_prime,j] <= m.xi[p,j]
             else: 
                 return pym.Constraint.Skip
-        def c_r2(m,p,p_prime,j):
+        def c_z2(m,p,p_prime,j):
             if p < p_prime:
-                return m.r[p,p_prime,j] <= m.xi[p_prime,j]
+                return m.z[p,p_prime,j] <= m.xi[p_prime,j]
             else: 
                 return pym.Constraint.Skip
-        def c_r3(m,p,p_prime,j):
+        def c_z3(m,p,p_prime,j):
             if p < p_prime:
-                return m.r[p,p_prime,j] >= m.xi[p,j] + m.xi[p_prime,j] -1
+                return m.z[p,p_prime,j] >= m.xi[p,j] + m.xi[p_prime,j] -1
             else: 
                 return pym.Constraint.Skip
-        
-        def cxi_(m,p,j):
-          return m.xi[p,j] == m.xi_r[p,j] + m.xi_l[p,j]
-        def cxi_lr_(m,p,j):
-          return m.xi_r[p,j] + m.xi_l[p,j] <= 1
-        def cxi_1_(m,p,j):
-          return m.beta[p,j] >= epsilon - M*(1- m.xi_r[p,j]  )
-        def cxi_2_(m,p,j):
-          return m.beta[p,j] <= M*m.xi_r[p,j]
-        def cxi_3_(m,p,j):
-          return m.beta[p,j] <= -epsilon + M*(1- m.xi_l[p,j]  )
-        def cxi_4_(m,p,j):
-          return m.beta[p,j] >= -M*m.xi_l[p,j]
-   
-                       
+            
+    
     elif dispersion == 'o1':
-        
-        def c_intra_dispersion_1_(m, p, p_prime):
-            if p < p_prime:
-                return  m.v[p,p_prime]  + m.v[p_prime,p] == 1
-            else: 
-                return pym.Constraint.Skip
-        def c_intra_dispersion_2_(m, p, p_prime, p_sec):
-            if p != p_prime and p != p_sec and p_prime != p_sec:
-                return m.v[p,p_sec] >= m.v[p,p_prime] + m.v[p_prime, p_sec] -1
-            else:
-                return pym.Constraint.Skip   
-        def c_intra_dispersion_3_(m, p, p_prime):
-            if p != p_prime:
-                return pym.quicksum(m.beta[p,j]*m.X0[j]   for j in m.j_b0) -  pym.quicksum(m.beta[p_prime,j]*m.X0[j] for j in m.j_b0) + M*(1-m.v[p,p_prime]) >= m.obj
-            else: 
-                return pym.Constraint.Skip
-        
-        
-        def c_extra_dispersion_1_(m, p,q,p_prime):
-            if p != p_prime:
-                return   m.v[p,p_prime] >= m.w[p,q] -m.w[p_prime,q]
-            else:
-                return pym.Constraint.Skip
-        def c_extra_dispersion_2_(m, p,q):
-            return  pym.quicksum(m.beta[p,j]*m.X0[j] for j in m.j_b0)- pym.quicksum(m.B0[q,j]*m.X0[j]   for j in m.j_b0) + M*(1-m.w[p,q]) >= m.obj
-        def c_extra_dispersion_3_(m, p,q):
-            return  pym.quicksum(m.B0[q,j]*m.X0[j]   for j in m.j_b0) -  pym.quicksum(m.beta[p,j]*m.X0[j] for j in m.j_b0) + M*m.w[p,q] >= m.obj
-             
-       
+        if len_X0 == 1:
+            def c_intra_dispersion_1_(m, p, p_prime):
+                if p < p_prime:
+                    return  m.v[p,p_prime]  + m.v[p_prime,p] == 1
+                else: 
+                    return pym.Constraint.Skip
+            def c_intra_dispersion_2_(m, p, p_prime, p_sec):
+                if p != p_prime and p != p_sec and p_prime != p_sec:
+                    return m.v[p,p_sec] >= m.v[p,p_prime] + m.v[p_prime, p_sec] -1
+                else:
+                    return pym.Constraint.Skip   
+            def c_intra_dispersion_3_(m, p, p_prime):
+                if p != p_prime:
+                    return pym.quicksum(m.beta[p,j]*m.X0[j]   for j in m.j_b0) -  pym.quicksum(m.beta[p_prime,j]*m.X0[j] for j in m.j_b0) + M*(1-m.v[p,p_prime]) >= m.obj
+                else: 
+                    return pym.Constraint.Skip
+            
+            
+            def c_extra_dispersion_1_(m, p,q,p_prime):
+                if p != p_prime:
+                    return   m.v[p,p_prime] >= m.w[p,q] -m.w[p_prime,q]
+                else:
+                    return pym.Constraint.Skip
+            def c_extra_dispersion_2_(m, p,q):
+                return  pym.quicksum(m.beta[p,j]*m.X0[j] for j in m.j_b0)- pym.quicksum(m.betaS[q,j]*m.X0[j]   for j in m.j_b0) + M*(1-m.w[p,q]) >= m.obj
+            def c_extra_dispersion_3_(m, p,q):
+                return  pym.quicksum(m.betaS[q,j]*m.X0[j]   for j in m.j_b0) -  pym.quicksum(m.beta[p,j]*m.X0[j] for j in m.j_b0) + M*m.w[p,q] >= m.obj
+                 
+            
+        else:
+            print('Not implemented.')
         
     
     # Accuracy
@@ -251,11 +258,41 @@ def P_max_dispersion_Lin_(dispersion, dataset, target, features, M,
     # Sparsity 
     def c_sparsity_1_(m,p):
         return pym.quicksum(m.xi[p,j] for j in m.j) <= theta 
-    def c_sparsity_2a_(m,p,j):
-        return -M*m.xi[p,j] <= m.beta[p,j]
-    def c_sparsity_2b_(m,p,j):
-        return  m.beta[p,j] <= M*m.xi[p,j]
-            
+    m.c_s1 = pym.Constraint(m.p, rule= c_sparsity_1_)
+    
+    
+    if dispersion == 'dsa':
+        m.xip = pym.Var(m.p,m.j, within=pym.Binary)
+        m.xim = pym.Var(m.p,m.j, within=pym.Binary)
+        def cs_pm_(m,p,j):
+            return m.xip[p,j] +m.xim[p,j] <= 1
+        m.cspm = pym.Constraint(m.p, m.j, rule= cs_pm_)
+        def cs_p1_(m,p,j):
+            return m.beta[p,j] >= 10e-5 - M * (1- m.xip[p,j])
+        m.csp1 = pym.Constraint(m.p, m.j, rule= cs_p1_)
+        def cs_p2_(m,p,j):
+            return m.beta[p,j] <=  M *  m.xip[p,j]
+        m.csp2 = pym.Constraint(m.p, m.j, rule= cs_p2_)
+        def cs_m1_(m,p,j):
+            return m.beta[p,j] <= -10e-5 + M * (1- m.xim[p,j])
+        m.csm1 = pym.Constraint(m.p, m.j, rule= cs_m1_)
+        def cs_m2_(m,p,j):
+            return m.beta[p,j] >=  -M *  m.xim[p,j]
+        m.csm2 = pym.Constraint(m.p, m.j, rule= cs_m2_)
+        
+        def cxi_(m,p,j):
+            return m.xi[p,j] == m.xip[p,j] +m.xim[p,j] 
+        m.cxi = pym.Constraint(m.p, m.j, rule= cxi_)
+        
+    else:
+        def c_sparsity_2a_(m,p,j):
+            return -M*m.xi[p,j] <= m.beta[p,j]
+        def c_sparsity_2b_(m,p,j):
+            return  m.beta[p,j] <= M*m.xi[p,j] 
+        m.c_s2a = pym.Constraint(m.p, m.j, rule= c_sparsity_2a_)
+        m.c_s2b = pym.Constraint(m.p, m.j, rule= c_sparsity_2b_)    
+
+    
     #
     # Declare constraints
     #
@@ -280,35 +317,25 @@ def P_max_dispersion_Lin_(dispersion, dataset, target, features, M,
     elif dispersion == 'dsa':
         m.c_Edis = pym.Constraint(m.q, m.p, rule = c_extra_dispersion)
         m.c_Idis = pym.Constraint(m.p, m.p, rule = c_intra_dispersion)
-        m.c_Idis_r1 = pym.Constraint(m.p, m.p, m.j, rule = c_r1)
-        m.c_Idis_r2 = pym.Constraint(m.p, m.p, m.j, rule = c_r2)
-        m.c_Idis_r3 = pym.Constraint(m.p, m.p, m.j, rule = c_r3)
-        m.c_xi_ = pym.Constraint(m.p,m.j, rule = cxi_)
-        m.c_xi_lr_ = pym.Constraint(m.p,m.j, rule = cxi_lr_)
-        m.c_xi_1_ = pym.Constraint(m.p,m.j, rule = cxi_1_)
-        m.c_xi_2_ = pym.Constraint(m.p,m.j, rule = cxi_2_)
-        m.c_xi_3_ = pym.Constraint(m.p,m.j, rule = cxi_3_)
-        m.c_xi_4_ = pym.Constraint(m.p,m.j, rule = cxi_4_)
+        m.c_Idis_z1 = pym.Constraint(m.p, m.p, m.j, rule = c_z1)
+        m.c_Idis_z2 = pym.Constraint(m.p, m.p, m.j, rule = c_z2)
+        m.c_Idis_z3 = pym.Constraint(m.p, m.p, m.j, rule = c_z3)
     
     elif dispersion  == 'o1': 
-   
-        m.c_Edis1 = pym.Constraint(m.p, m.q, m.p, rule = c_extra_dispersion_1_)
-        m.c_Edis2 = pym.Constraint(m.p, m.q, rule = c_extra_dispersion_2_)
-        m.c_Edis3 = pym.Constraint(m.p, m.q, rule = c_extra_dispersion_3_)
-    
-        m.c_Idis1 = pym.Constraint(m.p, m.p, rule = c_intra_dispersion_1_)
-        m.c_Idis2 = pym.Constraint(m.p,m.p, m.p, rule = c_intra_dispersion_2_)
-        m.c_Idis3 = pym.Constraint(m.p, m.p, rule = c_intra_dispersion_3_)
-   
-    
+        if len_X0 == 1: 
+            m.c_Edis1 = pym.Constraint(m.p, m.q, m.p, rule = c_extra_dispersion_1_)
+            m.c_Edis2 = pym.Constraint(m.p, m.q, rule = c_extra_dispersion_2_)
+            m.c_Edis3 = pym.Constraint(m.p, m.q, rule = c_extra_dispersion_3_)
+        
+            m.c_Idis1 = pym.Constraint(m.p, m.p, rule = c_intra_dispersion_1_)
+            m.c_Idis2 = pym.Constraint(m.p,m.p, m.p, rule = c_intra_dispersion_2_)
+            m.c_Idis3 = pym.Constraint(m.p, m.p, rule = c_intra_dispersion_3_)
+        else:
+            print('Not implemented.')
+        
     # Accuracy
     m.c_acc_p_ = pym.Constraint(m.p, rule = c_accuracy_p_)
     
-    # Sparsity
-    m.c_s1 = pym.Constraint(m.p, rule= c_sparsity_1_)
-    if dispersion != 'dsa':
-        m.c_s2a = pym.Constraint(m.p, m.j, rule= c_sparsity_2a_)
-        m.c_s2b = pym.Constraint(m.p, m.j, rule= c_sparsity_2b_)
-        
+    
     
     return m 

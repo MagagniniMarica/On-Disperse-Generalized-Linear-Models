@@ -1,0 +1,17 @@
+# Tested with Python 3.12.3
+
+# Core numerical and optimization dependencies
+numpy==1.26.4
+pandas==2.2.2
+pyomo==6.8.0
+gurobipy==11.0.3
+openpyxl==3.1.5
+
+# Dataset preprocessing
+scikit-learn==1.5.1
+ucimlrepo==0.0.7
+
+# Plot reproduction
+matplotlib==3.9.1
+seaborn==0.13.2
+

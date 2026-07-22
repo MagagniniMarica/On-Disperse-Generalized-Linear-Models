@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
-"""
 
+"""
 @author: Marica Magagnini
 
 This file contains the main function to perform the experiments of the project
-"Multiple dipserse GLM."
+"On disperse GLM."
 
 Most function can be employed in both of the two cases:
     - maximizing the accuracy. 
@@ -19,42 +18,39 @@ from pyomo import environ as pym
 from f_print import get_obj_sol_
 import gurobipy as GRB
 
-#
-# User path selection
-#
-#
-User = '../...' #<--- Fill in with yoru own path
+
 
 #
 #  Dataset
 # 
-def Dataset_selection(GLM):
+def Dataset_selection(GLM,name = None):
     """
-    This function select the dataset for the specific GLM:
-        - Linear Regression 'Lin': Boston Housing dataset with continuous target values.
-        - Logistic Regression 'Log': Boston Housing dataset with binary target values (0-1).
-        - Poisson Regression 'Poi':  Seoul Bike Sharing Demand with positive integer values
+    This function select the dataset for the experiments.
+    Note: complete path to run
     """
-    
+    path = f'C:/Users/.../Datasets/'
+    task = None
     if GLM == 'Lin':
-        from BostonHousing import data
-        task = ''
-        path = f'C:/{User}/Datasets/Boston Housing/'
+        if name =='ITT':
+            from Thermo import data          
+        elif name == 'CC':
+            from CommCrime import data          
+        else:
+            from BostonHousing import data
+                   
+   
     elif GLM == 'Log':
         from BostonHousing import data
         task = 'classification'
-        path =f'C:/{User}/Datasets/Boston Housing/'
     elif GLM == 'Poi':
         from SeoulBike import data
-        task = ''
-        path = f'C:/{User}/Datasets/SeoulBike/'
-    
+       
     return data(path,task)
 
 #
 # Known models
 #
-def S_Q_(GLM, features):
+def S_Q_(GLM, features, name = None):
     """
     
     Parameters
@@ -72,8 +68,13 @@ def S_Q_(GLM, features):
     SQ_obj : Series
         It contains the accuracy of the Q models.
 
+    Note : complete path to run
     """
-    full_path =f'C:/{User}/SQ/SQ_{GLM}.xlsx'
+    if name and GLM =='Lin':
+        full_path =f'C:/Users/.../SQ/SQ_{GLM}_{name}.xlsx'
+    else:
+        full_path =f'C:/Users/.../SQ/SQ_{GLM}.xlsx'
+    
     df = pd.read_excel(full_path)
     
     SQ_obj = df['tau_min']
@@ -84,14 +85,15 @@ def S_Q_(GLM, features):
 
 
 ###############################################################################
-# Maximize dispersion (D-PDP-GLM): call and solve a specific instance
+# Maximize dispersion : call and solve a specific instance
 ###############################################################################
     
 def PCD_problem_MAXDISP_(GLM, Solver_,
                  dataset,target, 
                  features, SQ,P, tau, theta, M, X0,
                  dispersion, runs_vns,TimeLimit_vns,
-                 SP_feas, gamma_max_feas):
+                 SP_feas, obj_feas,
+                 obj_opt=None, gap_tol=None):
     """
     Parameters
     ----------
@@ -140,7 +142,8 @@ def PCD_problem_MAXDISP_(GLM, Solver_,
     N,J = dataset.shape     # N: number of dataset elements, number of features
     J1 = J+1                # number of fetures + bias term
     status = None
-    
+    SP, SP_obj = (SP_feas, obj_feas)
+    type_sol = ' (saved last best feas sol) '  
     ###########################################################################
     # Linear Regression - Exact computation
     ###########################################################################
@@ -160,8 +163,8 @@ def PCD_problem_MAXDISP_(GLM, Solver_,
         solver.set_instance(instance)
         
         #Solver parameters
-        solver.options['TimeLimit'] =1800
-        
+        solver.options['TimeLimit'] =1800 
+       
         #
         # Results
         #
@@ -170,95 +173,100 @@ def PCD_problem_MAXDISP_(GLM, Solver_,
         #
         # Solver status
         #
-        
         grb_model = solver._solver_model
 
-        # Status and number of solutions
         status_code = grb_model.Status
         sol_count = grb_model.SolCount if hasattr(grb_model, "SolCount") else 0
-
-        # Obj and MIPGap
-        if sol_count > 0 and grb_model.SolCount > 0:
+        
+        objval = float("nan")
+        mipgap = float("nan")
+        # Obj value and MIPGap, if available
+        if sol_count > 0 :
             objval = grb_model.ObjVal
             mipgap = grb_model.MIPGap if hasattr(grb_model, "MIPGap") else float('nan')
             
             global get_obj_sol_
-            SP_obj, SP = get_obj_sol_(instance)
-        else:
-            objval = float('nan')
-            mipgap = float('nan')
+            SP_obj_gurobi, SP_gurobi = get_obj_sol_(instance)
             
-            SP, SP_obj = ([],0)
-
-        # Status Message
+            
+            if  SP_obj_gurobi > SP_obj:
+                SP, SP_obj = (SP_gurobi, SP_obj_gurobi)
+                type_sol = ' (Gurobi save) '
+                
+                
+        # Interpretation of the status code
         status_msg = {
-            GRB.GRB.OPTIMAL: "Optimal Solution Found",
+            GRB.GRB.OPTIMAL: "Optimal solution found",
             GRB.GRB.TIME_LIMIT: "Time limit reached",
-            GRB.GRB.INFEASIBLE: "Infeasible Problem",
-            GRB.GRB.UNBOUNDED: "Unbounded Problem",
-            }.get(status_code, f"Unknown status (code={status_code})")
-
+            GRB.GRB.INFEASIBLE: "Infeasible model",
+            GRB.GRB.UNBOUNDED: "Unbounded model",
+            GRB.GRB.INF_OR_UNBD: "Infeasible or unbounded",
+            GRB.GRB.INTERRUPTED: "Manually interrupted",
+            }.get(status_code, f"Status unknown (code={status_code})")
+        
+        status_msg = status_msg + type_sol
         status = (objval,mipgap,status_msg)
-   
+        
+
     ###########################################################################
     # Linear, Logistic,  Poisson Regression - Heuristic Results
     ###########################################################################
     else:
         # Select local solver maximum number of iteration 
-        solver_Iterations = {'Lin': 200, 'Log': 200, 'Poi': 1000}.get(GLM, None)
+        solver_Iterations = 2000
         
         # Call heuristic strategy
-        from P_CD_problem_MaxDisp.VNS_MaxDisp import VNS, VNS_dsa_
+        from P_CD_problem_MaxDisp.VNS_MaxDisp import VNS 
         
         
         #
         # VNS parameters
         #
-        K = J1-theta 
+        K = J1 #max ~ PxJ1
 
 
-        SP, SP_obj = (SP_feas, gamma_max_feas)
-        status = 'FAIL : Heuristic did NOT find a solution better than the feasible initial one.'
         
+        status = 'FAIL : Heuristic did NOT find a solution better than the feasible initial one.'
+        SP_objtime_ev = pd.DataFrame([{'time': 0,'obj': obj_feas}])
         
         for run in range(runs_vns):
-            # dispersion 'dsa' has a slightly different VNS strategy. 
             
-            if dispersion == 'dsa':
-                RES, FSPvns, betaPvns, obj_vns = VNS_dsa_(GLM, Solver_, 
-                                                          K,TimeLimit_vns,
-                                                          dataset, target, features, SQ, 
-                                                          P,J1,theta, tau, 
-                                                          X0,solver_Iterations)
-                
-            else:
-                RES, FSPvns, betaPvns, obj_vns = VNS(GLM, Solver_,
-                                                     K,TimeLimit_vns,
-                                                     dataset, target, features, SQ, 
-                                                     P,J1,theta, tau,dispersion, 
-                                                     X0, solver_Iterations)
-            
+
+            RES, FSPvns, betaPvns, obj_vns, obj_time_ev_vns = VNS(GLM, Solver_,
+                                                                 K,TimeLimit_vns,
+                                                                 dataset, target, features, SQ, 
+                                                                 P,J1,theta, tau,dispersion, 
+                                                                 X0, solver_Iterations,
+                                                                 obj_feas, obj_opt, gap_tol)
+                        
             
             # Select the best result among all the VNS runs (largest dispersion value)
             if obj_vns > SP_obj: 
                 SP_obj = obj_vns         
                 SP = betaPvns    
+                SP_objtime_ev = pd.DataFrame(obj_time_ev_vns)
                 status = 'SUCCESS : Heuristic FOUND a solution better than the feasible initial one.'
+        
+        
                 
-
+        #Save obj evolution over time
+        save_dir = os.path.join('.', f'D_HEUR_{GLM}_{dispersion}')
+        os.makedirs(save_dir, exist_ok=True)
+        filename = f"D_objtime_HEUR_{GLM}_{dispersion}_tau{tau}_theta{theta}.xlsx"
+        filepath = os.path.join(save_dir, filename)
+        SP_objtime_ev.to_excel(filepath, index=False)
             
     return SP, SP_obj, status
 
 ###############################################################################
-# Maximize accuracy (A-PDP-GLM): call and solve a specific instance
+# Maximize accuracy : call and solve a specific instance
 ###############################################################################
 
 
 # Parameters for Max Acc case
-def params_(GLM, dispersion):
+def params_(GLM, dispersion, directory = None):
     """
-    
-
+    Function to read the parameters (tau, theta, gamma_max) from a file.
     Parameters
     ----------
     GLM : string
@@ -274,17 +282,19 @@ def params_(GLM, dispersion):
 
     """
     
-    # Build File name
-    directory = f'C:/{User}/A/params/'
+    # Build directory if not provided
+    
+    if not directory :
+        directory = f'C:/Users/../params/'
     nome_file = f"D_Obj_{GLM}_{dispersion}.xlsx"
     percorso_completo = os.path.join(directory, nome_file)
 
-    # Check
+    # Verify if file exists
     if not os.path.exists(percorso_completo):
-        print(f"File non trovato: {percorso_completo}")
+        print(f"File not found: {percorso_completo}")
         return
 
-    # Read Data
+    # Read the file based on its extension
     parameters = pd.read_excel(percorso_completo)
 
     
@@ -295,7 +305,8 @@ def PCD_problem_MAXACC_(GLM, Solver_,
                  dataset,target,
                  features, SQ, P, gamma, tau, theta, M, X0,
                  dispersion, runs_vns,TimeLimit_vns,
-                 SP_feas, obj_feas):
+                 SP_feas, obj_feas, 
+                 obj_opt=None, gap_tol=None):
     """
 
     Parameters
@@ -349,7 +360,7 @@ def PCD_problem_MAXACC_(GLM, Solver_,
     N,J = dataset.shape
     J1 = J+1
     status = None
-    
+    SP, SP_obj = (SP_feas, obj_feas)
     ###########################################################################
     # Linear Regression - Exact computation
     ###########################################################################
@@ -365,13 +376,12 @@ def PCD_problem_MAXACC_(GLM, Solver_,
         # Solver
         #
         solver = pym.SolverFactory(Solver_)
-        # Collega il modello all'istanza del solver
+        
         solver.set_instance(instance)
                
         #Solver parameters
-        solver.options['TimeLimit'] =300
-
-        
+        solver.options['TimeLimit'] =1800
+       
         #
         # Results
         #
@@ -381,71 +391,82 @@ def PCD_problem_MAXACC_(GLM, Solver_,
         # Solver status
         #
         
-        # Accesso al modello Gurobi nativo
         grb_model = solver._solver_model
 
-        # Stato e numero di soluzioni
+        
         status_code = grb_model.Status
         sol_count = grb_model.SolCount if hasattr(grb_model, "SolCount") else 0
 
-        # Valore funzione obiettivo e MIPGap, se disponibile
-        if sol_count > 0 and grb_model.SolCount > 0:
+        objval = float("nan")
+        mipgap = float("nan")
+        # Obj value and MIPGap, if available
+        if sol_count > 0:
             objval = grb_model.ObjVal
             mipgap = grb_model.MIPGap if hasattr(grb_model, "MIPGap") else float('nan')
             
             global get_obj_sol_
-            SP_obj, SP = get_obj_sol_(instance)
-        else:
-            objval = float('nan')
-            mipgap = float('nan')
+            SP_obj_gurobi, SP_gurobi = get_obj_sol_(instance)
             
-            SP, SP_obj = ([],0)
-
-        ## Status Message
+            
+            if  SP_obj_gurobi < SP_obj:
+                SP, SP_obj = SP_gurobi, SP_obj_gurobi
+                
+        # Interpretation of the status code
         status_msg = {
-            GRB.GRB.OPTIMAL: "Optimal Solution Found",
+            GRB.GRB.OPTIMAL: "Optimal solution found",
             GRB.GRB.TIME_LIMIT: "Time limit reached",
-            GRB.GRB.INFEASIBLE: "Infeasible Problem",
-            GRB.GRB.UNBOUNDED: "Unbounded Problem",
+            GRB.GRB.INFEASIBLE: "Model is infeasible",
+            GRB.GRB.UNBOUNDED: "Model is unbounded",
+            GRB.GRB.INF_OR_UNBD: "Infeasible or unbounded",
+            GRB.GRB.INTERRUPTED: "Interrupted manually",
             }.get(status_code, f"Unknown status (code={status_code})")
-
+                
         status = (objval,mipgap,status_msg)
-            
-            
-        print("This is an optimal solution.")
+        
 
     ###########################################################################
     # Linear, Logistic,  Poisson Regression - Heuristic Results
     ###########################################################################
     else:
-        # Select local solver maximum number of iteration 
-        solver_Iterations = {'Lin': 200, 'Log': 200, 'Poi': 1000}.get(GLM, None)
+        # Select local solver maximum number of iteration
+        solver_Iterations = 1000
         
         from P_CD_problem_MaxAcc.VNS_Max_Acc import VNS
 
         #
         # VNS parameters
         #
-        K = J1-theta
+        K =  J1 #max ~ PxJ1
         
-        SP, SP_obj = (SP_feas, obj_feas)
+        
         status = 'FAIL : Heuristic did NOT find a solution better than the feasible initial one.'
-        
+        SP_objtime_ev = pd.DataFrame([{'time': 0,'obj': obj_feas}])
         
         for run in range(runs_vns):
             
-            RES, FSPvns, betaPvns, obj_vns = VNS(GLM, Solver_, 
-                                                 K,TimeLimit_vns,  
-                                                 dataset, target, features, SQ,
-                                                 P,J1,theta, gamma, tau,dispersion, 
-                                                 X0, solver_Iterations)
-            
-            # SP_obj best among all the heuristic runs
+            RES, FSPvns, betaPvns, obj_vns, obj_time_ev_vns = VNS(GLM, Solver_, 
+                                                                 K,TimeLimit_vns,  
+                                                                 dataset, target, features, SQ,
+                                                                 P,J1,theta, gamma, tau,dispersion, 
+                                                                 X0, solver_Iterations,
+                                                                 obj_feas, obj_opt, gap_tol)
+                                
+            # SP_obj nel caso euristico è il migliore ottenuto sui run
             if obj_vns < SP_obj: 
                 SP_obj = obj_vns         
                 SP = betaPvns               # SP of of all the runs
+                SP_objtime_ev = pd.DataFrame(obj_time_ev_vns)
                 status = 'SUCCESS : Heuristic FOUND a solution better than the feasible initial one.'
-            
+        
+        
+        
+
+        #Save obj evolution over time
+        save_dir = os.path.join('.', f'A_HEUR_{GLM}_{dispersion}')
+        os.makedirs(save_dir, exist_ok=True)
+        filename = f"A_objtime_HEUR_{GLM}_{dispersion}_tau{tau}_theta{theta}_gamma{gamma}.xlsx"
+        filepath = os.path.join(save_dir, filename)
+        SP_objtime_ev.to_excel(filepath, index=False)
         
     return SP, SP_obj, status
 
@@ -454,7 +475,7 @@ def PCD_problem_MAXACC_(GLM, Solver_,
 # Save Results
 ###############################################################################
 
-# P-models Coefficients
+#Coefficients
 def save_results_coeff_xlsx(AD, Solver_, GLM, dispersion, theta, tau, gamma, 
                             SP,SP_obj, SQ, SQ_obj,  features, filename = None):
     """
@@ -483,7 +504,7 @@ def save_results_coeff_xlsx(AD, Solver_, GLM, dispersion, theta, tau, gamma,
         the model coefficients (bias included). 
     SP_obj : float
         If AD = 'D' :  Maximal dispepersion computed for the set of P-models.
-        If AD = 'A' :  Maximal accuracy (sum (or mean?)) computed for the set of P-models.
+        If AD = 'A' :  Maximal accuracy (sum (or mean)) computed for the set of P-models.
     SQ : DataFrame of Q rows 
         Each row represents a GLM already known. The columns are the coefficients 
         of the Q known models.
@@ -544,7 +565,7 @@ def save_results_coeff_xlsx(AD, Solver_, GLM, dispersion, theta, tau, gamma,
         dati.append(row)
     
 
-    # Columns names
+    # Nomi colonne: index, GML, beta_0 ... beta_J1, Train_score, Test_score
     colonne = [f'{GLM}_P1:{P}_Q{P+1}:']+ ['bias'] + list(features)  + ['Obj']
     
     
